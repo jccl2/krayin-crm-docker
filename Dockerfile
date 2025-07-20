@@ -1,45 +1,60 @@
-# Use uma imagem base compatível com PHP e Apache para ARM64
-FROM arm64v8/php:8.1-apache
+# main image
+FROM php:8.3-apache
 
-# Instale dependências do sistema e extensões PHP necessárias
+# installing dependencies
 RUN apt-get update && apt-get install -y \
     git \
-    unzip \
-    curl \
-    libzip-dev \
-    libpng-dev \
-    libjpeg-dev \
+    ffmpeg \
     libfreetype6-dev \
     libicu-dev \
-    nodejs \
-    npm \
-    && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install gd zip pdo_mysql intl calendar \
-    && rm -rf /var/lib/apt/lists/*
+    libgmp-dev \
+    libjpeg62-turbo-dev \
+    libpng-dev \
+    libwebp-dev \
+    libxpm-dev \
+    libzip-dev \
+    unzip \
+    zlib1g-dev
 
-# Instale o Composer
-RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+# configuring php extension
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp
+RUN docker-php-ext-configure intl
 
-# Configure o timezone
-RUN echo "date.timezone=America/Sao_Paulo" > /usr/local/etc/php/conf.d/timezone.ini
+# installing php extension
+RUN docker-php-ext-install bcmath calendar exif gd gmp intl mysqli pdo pdo_mysql zip
 
-# Copie o código do Krayin CRM
-WORKDIR /var/www/html
-COPY ../laravel-crm/ .
+# installing composer
+COPY --from=composer:2.7 /usr/bin/composer /usr/local/bin/composer
 
-# Instale as dependências do PHP
-RUN composer install --no-dev
+# installing node js
+COPY --from=node:22.9 /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=node:22.9 /usr/local/bin/node /usr/local/bin/node
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
 
-# Gere os arquivos estáticos do frontend
-RUN npm install --legacy-peer-deps \
-    && npm run build
+# installing global node dependencies
+RUN npm install -g npx
+RUN npm install -g laravel-echo-server
 
-# Configure permissões
-RUN chown -R www-data:www-data /var/www/html \
-    && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
+# arguments
+ARG container_project_path
+ARG uid
+ARG user
 
-# Exponha a porta do servidor web
-EXPOSE 80
+# setting work directory
+WORKDIR $container_project_path
 
-# Configure o entrypoint
-CMD ["apache2-foreground"]
+# adding user
+RUN useradd -G www-data,root -u $uid -d /home/$user $user
+RUN mkdir -p /home/$user/.composer && \
+    chown -R $user:$user /home/$user
+
+# setting apache
+COPY ./.configs/apache.conf /etc/apache2/sites-available/000-default.conf
+RUN a2enmod rewrite
+
+# setting up project from `src` folder
+RUN chmod -R 775 $container_project_path
+RUN chown -R $user:www-data $container_project_path
+
+# changing user
+USER $user
